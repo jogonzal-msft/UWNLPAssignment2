@@ -10,6 +10,7 @@ public class Test<E> {
       POSTaggerTester.main(new String[]{
               "-path",
               ".\\data\\wsj\\"
+              //,"-verbose"
       });
       System.out.println("Test PASSED.");
   }
