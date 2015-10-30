@@ -456,12 +456,7 @@ public class POSTaggerTester {
   }
 
   /**
-   * The MostFrequentTagScorer gives each test word the tag it was seen with
-   * most often in training (or the tag with the most seen word types if the
-   * test word is unseen in training.  This scorer actually does a little more
-   * than its name claims -- if constructed with restrictTrigrams = true, it
-   * will forbid illegal tag trigrams, otherwise it makes no use of tag history
-   * information whatsoever.
+   * The HMM tag scorer implements HMM to get a probability of a tag showing up
    */
   static class HMMTagScorer implements LocalTrigramScorer {
 
