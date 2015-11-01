@@ -1,4 +1,5 @@
 import edu.berkeley.nlp.Test;
+import jorge.ObtainLastNCharacters;
 import jorge.PseudoWordClassifier;
 
 import java.util.ArrayList;
@@ -16,6 +17,7 @@ public class Main {
 
 
         // TestPseudoWordClassifier();
+        //TestReturnLastNCharacters();
     }
 
     // Test the bucketizer
@@ -33,6 +35,24 @@ public class Main {
         for(String element : list){
             String bucket = PseudoWordClassifier.GetPseudoWord(element);
             System.out.format("Word: %s\t\tBucket: %s%n", element, bucket, "yay");
+        }
+    }
+
+    // Test the bucketizer
+    public static void TestReturnLastNCharacters(){
+        ArrayList<String> list = new ArrayList<String>() {{
+            add("1934");
+            add("12.3874");
+            add("123,123.283");
+            add("1");
+            add("Jorge");
+            add("jorge");
+            add("J.");
+            add("JORGE");
+        }};
+        for(String element : list){
+            String bucket = ObtainLastNCharacters.ObtainLastNCharacters(element, 3);
+            System.out.format("Word: %s\t\tLast3: %s%n", element, bucket, "yay");
         }
     }
 }

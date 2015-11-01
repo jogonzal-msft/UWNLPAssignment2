@@ -4,6 +4,7 @@ import edu.berkeley.nlp.io.PennTreebankReader;
 import edu.berkeley.nlp.ling.Tree;
 import edu.berkeley.nlp.ling.Trees;
 import edu.berkeley.nlp.util.*;
+import jorge.ObtainLastNCharacters;
 import jorge.PseudoWordClassifier;
 
 import java.util.*;
@@ -444,10 +445,10 @@ public class POSTaggerTester {
   static interface LocalTrigramScorer {
     /**
      * The Counter returned should contain log probabilities, meaning if all
-     * values are exponentiated and summed, they should sum to one (if it's a 
-	 * single conditional pobability). For efficiency, the Counter can 
-	 * contain only the tags which occur in the given context 
-	 * with non-zero model probability.
+     * values are exponentiated and summed, they should sum to one (if it's a
+     * single conditional pobability). For efficiency, the Counter can
+     * contain only the tags which occur in the given context
+     * with non-zero model probability.
      */
     Counter<String> getLogScoreCounter(LocalTrigramContext localTrigramContext);
 
@@ -457,7 +458,126 @@ public class POSTaggerTester {
   }
 
   /**
-   * The HMM tag scorer implements HMM to get a probability of a tag showing up
+   * The HMM tag scorer implements HMM with suffix trees to get a probability of a tag showing up
+   */
+  static class HMMTagScorerWithSuffixTrees implements LocalTrigramScorer {
+
+    boolean restrictTrigrams; // if true, assign log score of Double.NEGATIVE_INFINITY to illegal tag trigrams.
+
+    CounterMap<String, String> wordsToTags = new CounterMap<String, String>();
+    Counter<String> tags = new Counter<String>();
+    Counter<String> seenTagTrigrams = new Counter<String>();
+    Counter<String> seenTagBigrams = new Counter<String>();
+
+    // Using 3 characters for the suffix
+    CounterMap<String, String> minorSuffixCounter = new CounterMap<String, String>();
+    CounterMap<String, String> superiorSuffixCounter = new CounterMap<String, String>();
+
+    // Setting Teta to empirically - this will still ensure a valid distribution and
+    // values from 0.03 - 0.1 seem like gooa values according to (Thorsten, 2000)
+    double teta = 0.05;
+
+    public int getHistorySize() {
+      return 2;
+    }
+
+    public Counter<String> getLogScoreCounter(LocalTrigramContext localTrigramContext) {
+      int position = localTrigramContext.getPosition();
+      String word = localTrigramContext.getWords().get(position);
+
+      // TagCounter will directly define the e(...)
+      Counter<String> tagCounter;
+      if (wordsToTags.keySet().contains(word)) {
+        tagCounter = wordsToTags.getCounter(word);
+      } else {
+        // Need to fill the tagCounter with all the values
+        String charEndingMinor = ObtainLastNCharacters.ObtainLastNCharacters(word, 2);
+        String charEndingSuperior = ObtainLastNCharacters.ObtainLastNCharacters(word, 3);
+
+        tagCounter = new Counter<String>();
+        for(String sampleTag : tags.keySet()){
+          double count = (superiorSuffixCounter.getCount(charEndingSuperior, sampleTag) + teta * minorSuffixCounter.getCount(charEndingMinor, sampleTag)) / (1  + teta);
+          tagCounter.setCount(sampleTag, count);
+        }
+      }
+
+      // To calculate q(...), we'll need to evaluate trigram + bigram counts and divide
+      Set<String> allowedFollowingTags = allowedFollowingTags(tagCounter.keySet(), localTrigramContext.getPreviousPreviousTag(), localTrigramContext.getPreviousTag());
+      Counter<String> logScoreCounter = new Counter<String>();
+      String bigramKey = makeBigramString(localTrigramContext.getPreviousPreviousTag(), localTrigramContext.getPreviousTag());
+      double bigramCount = seenTagBigrams.getCount(bigramKey);
+      for (String tag : tagCounter.keySet()) {
+        if (!restrictTrigrams || allowedFollowingTags.isEmpty() || allowedFollowingTags.contains(tag)){
+          String trigramKey = makeTrigramString(localTrigramContext.getPreviousPreviousTag(), localTrigramContext.getPreviousTag(), tag);
+          double trigramCount = seenTagTrigrams.getCount(trigramKey);
+          double emissionProbability = tagCounter.getCount(tag);
+          double logScore = Math.log(trigramCount / bigramCount * emissionProbability);
+          logScoreCounter.setCount(tag, logScore);
+        }
+      }
+      return logScoreCounter;
+    }
+
+    private Set<String> allowedFollowingTags(Set<String> tags, String previousPreviousTag, String previousTag) {
+      Set<String> allowedTags = new HashSet<String>();
+      for (String tag : tags) {
+        String trigramString = makeTrigramString(previousPreviousTag, previousTag, tag);
+        if (seenTagTrigrams.containsKey((trigramString))) {
+          allowedTags.add(tag);
+        }
+      }
+      return allowedTags;
+    }
+
+    private String makeBigramString(String previousTag, String currentTag) {
+      return previousTag + " " + currentTag;
+    }
+
+    private String makeTrigramString(String previousPreviousTag, String previousTag, String currentTag) {
+      return previousPreviousTag + " " + previousTag + " " + currentTag;
+    }
+
+    public void train(List<LabeledLocalTrigramContext> labeledLocalTrigramContexts) {
+      // collect word-tag counts
+      for (LabeledLocalTrigramContext labeledLocalTrigramContext : labeledLocalTrigramContexts) {
+        String word = labeledLocalTrigramContext.getCurrentWord();
+        String tag = labeledLocalTrigramContext.getCurrentTag();
+
+        // Keep track of unknown tags and wordsToTags
+        String charEndingMinor = ObtainLastNCharacters.ObtainLastNCharacters(word, 2);
+        String charEndingSuperior = ObtainLastNCharacters.ObtainLastNCharacters(word, 3);
+
+        //if (Character.isUpperCase(word.charAt(0))){
+        minorSuffixCounter.incrementCount(charEndingMinor, tag, 1.0);
+        superiorSuffixCounter.incrementCount(charEndingSuperior, tag, 1.0);
+
+        tags.incrementCount(tag, 1.0);
+
+        wordsToTags.incrementCount(word, tag, 1.0);
+
+        // Keep track of bigram/trigram count
+        seenTagTrigrams.incrementCount(makeTrigramString(labeledLocalTrigramContext.getPreviousPreviousTag(), labeledLocalTrigramContext.getPreviousTag(), labeledLocalTrigramContext.getCurrentTag()), 1);
+        seenTagBigrams.incrementCount(makeBigramString(labeledLocalTrigramContext.getPreviousTag(), labeledLocalTrigramContext.getCurrentTag()), 1);
+      }
+
+      // Normalize the tag -> words map
+      wordsToTags = Counters.conditionalNormalize(wordsToTags);
+      minorSuffixCounter = Counters.conditionalNormalize(minorSuffixCounter);
+      superiorSuffixCounter = Counters.conditionalNormalize(superiorSuffixCounter);
+    }
+
+    public void validate(List<LabeledLocalTrigramContext> labeledLocalTrigramContexts) {
+      // no tuning for this dummy model!
+    }
+
+    public HMMTagScorerWithSuffixTrees(boolean restrictTrigrams) {
+      this.restrictTrigrams = restrictTrigrams;
+    }
+  }
+
+
+  /**
+   * The HMM tag scorer implements HMM with unknown word classes to get a probability of a tag showing up
    */
   static class HMMTagScorerWithUnknownWordClasses implements LocalTrigramScorer {
 
@@ -861,7 +981,7 @@ public class POSTaggerTester {
     System.out.println("done.");
 
     // Construct tagger components
-    LocalTrigramScorer localTrigramScorer = new HMMTagScorer(false);
+    LocalTrigramScorer localTrigramScorer = new HMMTagScorerWithSuffixTrees(false);
     // TODO : improve on the GreedyDecoder
     TrellisDecoder<State> trellisDecoder = new GreedyDecoder<State>();
 
@@ -873,11 +993,11 @@ public class POSTaggerTester {
     // Evaluation set, use either test of validation (for dev)
     final List<TaggedSentence> evalTaggedSentences;
     if (useValidation) {
-    	evalTaggedSentences = validationTaggedSentences;
+      evalTaggedSentences = validationTaggedSentences;
     } else {
-    	evalTaggedSentences = testTaggedSentences;
+      evalTaggedSentences = testTaggedSentences;
     }
-    
+
     // Test tagger
     evaluateTagger(posTagger, evalTaggedSentences, trainingVocabulary, verbose);
   }
