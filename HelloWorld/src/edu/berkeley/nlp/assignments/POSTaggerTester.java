@@ -259,14 +259,25 @@ public class POSTaggerTester {
 
   static class VitterbiDecoder <S> implements TrellisDecoder<S> {
 
-    private List<Counter<S>> trellisCells;
+    private class TrellisCell{
+      double Value;
+      ArrayList<S> History;
+      public TrellisCell(double value, ArrayList<S> history){
+        History = history;
+        Value = value;
+      }
+    }
+
+    private List<Map<S, TrellisCell>> trellisCells;
 
     public List<S> getBestPath(Trellis<S> trellis) {
-      trellisCells = new ArrayList<Counter<S>>();
+      trellisCells = new ArrayList<Map<S, TrellisCell>>();
       List<S> states = new ArrayList<S>();
       S startState = trellis.getStartState();
-      Counter<S> counterStart = new Counter<S>();
-      counterStart.setCount(startState, 0);
+      Map<S, TrellisCell> counterStart = new HashMap<S, TrellisCell>();
+      ArrayList<S> listStart = new ArrayList<S>();
+      listStart.add(startState);
+      counterStart.put(startState, new TrellisCell(0.0, listStart));
       trellisCells.add(0, counterStart);
 
       Set<S> currentColumn = new HashSet<S>();
@@ -285,15 +296,13 @@ public class POSTaggerTester {
         currentColumnIndex++;
       }
 
-      // Populate states according to max
-      for (int i = 0; i < trellisCells.size(); i++){
-        Counter<S> tagCounter = trellisCells.get(i);
-        S stateToAdd = tagCounter.argMax();
-        double valueToAdd = tagCounter.getCount(stateToAdd);
-        states.add(stateToAdd);
+      // Get last state history
+      for(S s : trellisCells.get(trellisCells.size() - 1).keySet()){
+        TrellisCell cell = trellisCells.get(trellisCells.size() - 1).get(s);
+        return cell.History;
       }
 
-      return states;
+      throw new RuntimeException("Should never happen");
     }
 
     private Set<S> GetAllForwardTransitions(Set<S> currentColumn, Trellis<S> trellis) {
@@ -306,33 +315,43 @@ public class POSTaggerTester {
 
     private void GetBackwardsTransitionAndStore(Trellis<S> trellis, Set<S> forwardTransitions, int currentColumnIndex) {
 
-      Counter<S> newTrellisColumn = new Counter<S>();
+      Map<S, TrellisCell> newTrellisColumn = new HashMap<S, TrellisCell>();
       for(S state : forwardTransitions){
         Counter<S> backwardTransitions = trellis.getBackwardTransitions(state);
         // Pick the mas backward transition
         S maxTransition = null;
+        ArrayList<S> maxTransitionHistory = new ArrayList<S>();
         double maxTransitionValue = Double.NEGATIVE_INFINITY;
-        Counter<S> previousTransitionLookup = trellisCells.get(currentColumnIndex);
+        Map<S, TrellisCell> previousTransitionLookup = trellisCells.get(currentColumnIndex);
         for(S backwardTransition : backwardTransitions.keySet()){
           double backwardTransitionValue = backwardTransitions.getCount(backwardTransition);
 
           // Multiply against the most favorable previous index
-          double previousValue = previousTransitionLookup.getCount(backwardTransition);
+          double previousValue = previousTransitionLookup.get(backwardTransition).Value;
+          ArrayList<S> previousHistory = previousTransitionLookup.get(backwardTransition).History;
           backwardTransitionValue = backwardTransitionValue + previousValue;
+
           if (backwardTransitionValue == Double.NaN){
+            // Fix
             backwardTransitionValue = Double.NEGATIVE_INFINITY;
           }
+
           if (backwardTransitionValue >= maxTransitionValue){
+            // Keep this state
             maxTransitionValue = backwardTransitionValue;
             maxTransition = backwardTransition;
+            maxTransitionHistory = (ArrayList<S>)previousHistory.clone();
+            maxTransitionHistory.add(state);
           }
         }
 
-        /*if (maxTransition == null){
+        if (maxTransition == null){
           throw new RuntimeException("This should not happen!");
-        }*/
+        }
+
         // Store it
-        newTrellisColumn.setCount(state, maxTransitionValue);
+        TrellisCell cell = new TrellisCell(maxTransitionValue, maxTransitionHistory);
+        newTrellisColumn.put(state, cell);
       }
 
       // Add the whole column now
@@ -1071,7 +1090,7 @@ public class POSTaggerTester {
 
     // Construct tagger components
     LocalTrigramScorer localTrigramScorer = new HMMTagScorerWithUnknownWordClasses(false);
-    TrellisDecoder<State> trellisDecoder = new GreedyDecoder<>();
+    TrellisDecoder<State> trellisDecoder = new VitterbiDecoder<>();
 
     // Train tagger
     POSTagger posTagger = new POSTagger(localTrigramScorer, trellisDecoder);
