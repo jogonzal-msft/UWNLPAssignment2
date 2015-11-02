@@ -8,6 +8,7 @@ import jorge.ObtainLastNCharacters;
 import jorge.PseudoWordClassifier;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * @author Dan Klein
@@ -256,6 +257,89 @@ public class POSTaggerTester {
     List<S> getBestPath(Trellis<S> trellis);
   }
 
+  static class VitterbiDecoder <S> implements TrellisDecoder<S> {
+
+    private List<Counter<S>> trellisCells;
+
+    public List<S> getBestPath(Trellis<S> trellis) {
+      trellisCells = new ArrayList<Counter<S>>();
+      List<S> states = new ArrayList<S>();
+      S startState = trellis.getStartState();
+      Counter<S> counterStart = new Counter<S>();
+      counterStart.setCount(startState, 0);
+      trellisCells.add(0, counterStart);
+
+      Set<S> currentColumn = new HashSet<S>();
+      currentColumn.add(startState);
+      int currentColumnIndex = 0;
+      while (!currentColumn.contains(trellis.getEndState())) {
+        // Instead of using forward transitions, use all states
+        Set<S> forwardTransitions = GetAllForwardTransitions(currentColumn, trellis);
+
+        // Get backwards transitions for all of those transitions, and store the argmax of each in that column
+        GetBackwardsTransitionAndStore(trellis, forwardTransitions, currentColumnIndex);
+
+        // Advance to the next column
+        Set<S> nextColumn = forwardTransitions;
+        currentColumn = nextColumn;
+        currentColumnIndex++;
+      }
+
+      // Populate states according to max
+      for (int i = 0; i < trellisCells.size(); i++){
+        Counter<S> tagCounter = trellisCells.get(i);
+        S stateToAdd = tagCounter.argMax();
+        double valueToAdd = tagCounter.getCount(stateToAdd);
+        states.add(stateToAdd);
+      }
+
+      return states;
+    }
+
+    private Set<S> GetAllForwardTransitions(Set<S> currentColumn, Trellis<S> trellis) {
+      Set<S> forwardTransitions = new HashSet<S>();
+      for(S column : currentColumn){
+        forwardTransitions.addAll(trellis.getForwardTransitions(column).keySet());
+      }
+      return forwardTransitions;
+    }
+
+    private void GetBackwardsTransitionAndStore(Trellis<S> trellis, Set<S> forwardTransitions, int currentColumnIndex) {
+
+      Counter<S> newTrellisColumn = new Counter<S>();
+      for(S state : forwardTransitions){
+        Counter<S> backwardTransitions = trellis.getBackwardTransitions(state);
+        // Pick the mas backward transition
+        S maxTransition = null;
+        double maxTransitionValue = Double.NEGATIVE_INFINITY;
+        Counter<S> previousTransitionLookup = trellisCells.get(currentColumnIndex);
+        for(S backwardTransition : backwardTransitions.keySet()){
+          double backwardTransitionValue = backwardTransitions.getCount(backwardTransition);
+
+          // Multiply against the most favorable previous index
+          double previousValue = previousTransitionLookup.getCount(backwardTransition);
+          backwardTransitionValue = backwardTransitionValue + previousValue;
+          if (backwardTransitionValue == Double.NaN){
+            backwardTransitionValue = Double.NEGATIVE_INFINITY;
+          }
+          if (backwardTransitionValue >= maxTransitionValue){
+            maxTransitionValue = backwardTransitionValue;
+            maxTransition = backwardTransition;
+          }
+        }
+
+        /*if (maxTransition == null){
+          throw new RuntimeException("This should not happen!");
+        }*/
+        // Store it
+        newTrellisColumn.setCount(state, maxTransitionValue);
+      }
+
+      // Add the whole column now
+      trellisCells.add(newTrellisColumn);
+    }
+  }
+
   static class GreedyDecoder <S> implements TrellisDecoder<S> {
     public List<S> getBestPath(Trellis<S> trellis) {
       List<S> states = new ArrayList<S>();
@@ -474,7 +558,7 @@ public class POSTaggerTester {
     CounterMap<String, String> superiorSuffixCounter = new CounterMap<String, String>();
 
     // Setting Teta to empirically - this will still ensure a valid distribution and
-    // values from 0.03 - 0.1 seem like gooa values according to (Thorsten, 2000)
+    // values from 0.03 - 0.1 seem like good values according to (Thorsten, 2000)
     double teta = 0.05;
 
     public int getHistorySize() {
@@ -557,7 +641,7 @@ public class POSTaggerTester {
 
         // Keep track of bigram/trigram count
         seenTagTrigrams.incrementCount(makeTrigramString(labeledLocalTrigramContext.getPreviousPreviousTag(), labeledLocalTrigramContext.getPreviousTag(), labeledLocalTrigramContext.getCurrentTag()), 1);
-        seenTagBigrams.incrementCount(makeBigramString(labeledLocalTrigramContext.getPreviousTag(), labeledLocalTrigramContext.getCurrentTag()), 1);
+        seenTagBigrams.incrementCount(makeBigramString(labeledLocalTrigramContext.getPreviousPreviousTag(), labeledLocalTrigramContext.getPreviousTag()), 1);
       }
 
       // Normalize the tag -> words map
@@ -616,6 +700,11 @@ public class POSTaggerTester {
           double trigramCount = seenTagTrigrams.getCount(trigramKey);
           double emissionProbability = tagCounter.getCount(tag);
           double logScore = Math.log(trigramCount / bigramCount * emissionProbability);
+
+          if (Double.isNaN(logScore)){
+            logScore = Double.NEGATIVE_INFINITY;
+          }
+
           logScoreCounter.setCount(tag, logScore);
         }
       }
@@ -657,7 +746,7 @@ public class POSTaggerTester {
 
         // Keep track of bigram/trigram count
         seenTagTrigrams.incrementCount(makeTrigramString(labeledLocalTrigramContext.getPreviousPreviousTag(), labeledLocalTrigramContext.getPreviousTag(), labeledLocalTrigramContext.getCurrentTag()), 1);
-        seenTagBigrams.incrementCount(makeBigramString(labeledLocalTrigramContext.getPreviousTag(), labeledLocalTrigramContext.getCurrentTag()), 1);
+        seenTagBigrams.incrementCount(makeBigramString(labeledLocalTrigramContext.getPreviousPreviousTag(), labeledLocalTrigramContext.getPreviousTag()), 1);
       }
 
       // Normalize the tag -> words map
@@ -751,7 +840,7 @@ public class POSTaggerTester {
 
         // Keep track of bigram/trigram count
         seenTagTrigrams.incrementCount(makeTrigramString(labeledLocalTrigramContext.getPreviousPreviousTag(), labeledLocalTrigramContext.getPreviousTag(), labeledLocalTrigramContext.getCurrentTag()), 1);
-        seenTagBigrams.incrementCount(makeBigramString(labeledLocalTrigramContext.getPreviousTag(), labeledLocalTrigramContext.getCurrentTag()), 1);
+        seenTagBigrams.incrementCount(makeBigramString(labeledLocalTrigramContext.getPreviousPreviousTag(), labeledLocalTrigramContext.getPreviousTag()), 1);
       }
 
       // Normalize the tag -> words map
@@ -981,9 +1070,8 @@ public class POSTaggerTester {
     System.out.println("done.");
 
     // Construct tagger components
-    LocalTrigramScorer localTrigramScorer = new HMMTagScorerWithSuffixTrees(false);
-    // TODO : improve on the GreedyDecoder
-    TrellisDecoder<State> trellisDecoder = new GreedyDecoder<State>();
+    LocalTrigramScorer localTrigramScorer = new HMMTagScorerWithUnknownWordClasses(false);
+    TrellisDecoder<State> trellisDecoder = new GreedyDecoder<>();
 
     // Train tagger
     POSTagger posTagger = new POSTagger(localTrigramScorer, trellisDecoder);
