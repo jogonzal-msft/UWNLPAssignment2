@@ -687,6 +687,7 @@ public class POSTaggerTester {
     boolean restrictTrigrams; // if true, assign log score of Double.NEGATIVE_INFINITY to illegal tag trigrams.
 
     CounterMap<String, String> wordsToTags = new CounterMap<String, String>();
+    Counter<String> unkCount = new Counter<String>();
     CounterMap<String, String> unknownBucketTags = new CounterMap<String, String>();
     Counter<String> seenTagTrigrams = new Counter<String>();
     Counter<String> seenTagBigrams = new Counter<String>();
@@ -756,7 +757,8 @@ public class POSTaggerTester {
         String tag = labeledLocalTrigramContext.getCurrentTag();
 
         // Keep track of unknown tags and wordsToTags
-        if (!wordsToTags.keySet().contains(word)) {
+        unkCount.incrementCount(word, 1.0);
+        if (unkCount.getCount(word) < 5)  { // This is the number of times that a word has to appear to be considered not unknown
           // word is currently unknown, so tally its tag in the unknown tag counter
           String unknownBucket = PseudoWordClassifier.GetPseudoWord(word);
           unknownBucketTags.incrementCount(unknownBucket, tag, 1.0);
@@ -1090,8 +1092,8 @@ public class POSTaggerTester {
 
     long start = System.nanoTime();
     // Construct tagger components
-    LocalTrigramScorer localTrigramScorer = new MostFrequentTagScorer(false);
-    TrellisDecoder<State> trellisDecoder = new GreedyDecoder<>();
+    LocalTrigramScorer localTrigramScorer = new HMMTagScorerWithUnknownWordClasses(false);
+    TrellisDecoder<State> trellisDecoder = new VitterbiDecoder<>();
 
     // Train tagger
     POSTagger posTagger = new POSTagger(localTrigramScorer, trellisDecoder);
