@@ -1088,9 +1088,10 @@ public class POSTaggerTester {
     List<TaggedSentence> testTaggedSentences = readTaggedSentences(basePath, 2300, 2399);
     System.out.println("done.");
 
+    long start = System.nanoTime();
     // Construct tagger components
-    LocalTrigramScorer localTrigramScorer = new HMMTagScorerWithUnknownWordClasses(false);
-    TrellisDecoder<State> trellisDecoder = new VitterbiDecoder<>();
+    LocalTrigramScorer localTrigramScorer = new MostFrequentTagScorer(false);
+    TrellisDecoder<State> trellisDecoder = new GreedyDecoder<>();
 
     // Train tagger
     POSTagger posTagger = new POSTagger(localTrigramScorer, trellisDecoder);
@@ -1107,5 +1108,8 @@ public class POSTaggerTester {
 
     // Test tagger
     evaluateTagger(posTagger, evalTaggedSentences, trainingVocabulary, verbose);
+
+    long elapsedNanos = System.nanoTime() - start;
+    System.out.println("Ellapsed MS: " + (elapsedNanos / 1000000));
   }
 }
